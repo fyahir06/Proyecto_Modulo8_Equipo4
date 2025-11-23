@@ -1,0 +1,540 @@
+---
+output:
+  html_document:
+    theme: paper
+    highlight: pygments
+---
+
+# Proyecto Módulo 8 – Análisis Estadístico
+## Equipo 4
+
+**Integrantes:**
+
+- Cornejo Peralta Luis Axel  
+- Domínguez Amaro Aurora  
+- Fernández Sánchez Yahir Sebastián  
+- Gonzalez García Abimael  
+- Mosqueda Nieto Fernanda  
+
+<br>
+
+
+## Mercado laboral y desempleo
+
+En este proyecto analizaremos información del Banco Mundial relacionada con tres indicadores clave del mercado laboral: tasa de desempleo, tasa de participación laboral y población total. El propósito es utilizar estas bases para realizar un análisis estadístico que nos permita comparar países, identificar posibles diferencias entre hombres y mujeres, observar cambios a lo largo del tiempo y evaluar si existe una relación entre la participación laboral y el desempleo. A partir de estos indicadores, podremos generar visualizaciones y modelos sencillos que ayuden a describir el comportamiento del mercado laboral en distintos países y periodos.
+
+Las bases utilizadas son:
+
+- Tasa de desempleo (WB_GS_SL_UEM_ZS): Mide el porcentaje de personas desocupadas respecto a la fuerza laboral. Incluye información por país, año, sexo y grupo de edad. Los datos provienen de estimaciones y reportes de la Organización Internacional del Trabajo (OIT).
+
+- Tasa de participación laboral (WB_WDI_SL_TLF_CACT_NE_ZS): Indica la proporción de personas de 15 años o más que participan activamente en el mercado laboral. Este indicador también proviene de la OIT y corresponde únicamente a estimaciones nacionales.
+
+- Población total (WB_WDI_SP_POP_TOTL): Contiene estimaciones del número total de habitantes por país y año, basadas en censos, registros oficiales y proyecciones de organismos internacionales.
+
+El análisis busca responder preguntas como:
+
+- ¿Qué países tienen mayores y menores niveles de desempleo?
+
+- ¿Cómo ha evolucionado la participación laboral a lo largo del tiempo?
+
+- ¿Hay diferencias entre hombres y mujeres?
+
+- ¿Existe relación entre la participación laboral y la tasa de desempleo?
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(plotly)
+library(leaflet)
+library(crosstalk)
+library(RColorBrewer)
+library(ggplot2)
+library(kableExtra)
+library(htmltools)
+library(dplyr)
+library(readr)
+library(janitor)
+library(shiny)
+library(plotly)
+library(DT)
+```
+
+
+## Preparación y limpieza de datos
+
+Antes de realizar el análisis, se aplicó un proceso de limpieza a las bases que incluyó:
+
+- estandarización de nombres de variables,
+
+- eliminación de registros duplicados,
+
+- filtrado de observaciones incompletas,
+
+- selección de variables relevantes,
+
+- conversión de tipos de datos,
+
+- filtrado de los años recientes, conservando únicamente información a partir del año 2000.
+
+Finalmente, para poder comparar de manera directa la tasa de desempleo y la participación laboral, fue necesario unir ambas bases. Para esto se filtró la información de desempleo únicamente al grupo de edad “15 years old and over”, que es el mismo criterio utilizado por la OIT para calcular la participación laboral. Luego se completaron las categorías faltantes en la base de participación laboral y se realizó la unión mediante las variables comunes: país, año, sexo, grupo de edad y tipo de estimación.
+
+
+```{r, echo=FALSE, message=FALSE}
+# Cargamos datos de la Población Total 
+poblacion_raw <- read_csv("/Users/yahir/Desktop/BD/WB_WDI_SP_POP_TOTL.csv")
+
+# Limpiamos la base de datos
+poblacion_clean <- poblacion_raw %>%
+  clean_names() %>%
+  filter(time_period >= 2000) %>%
+  select(time_period, ref_area_label, obs_value) %>%
+  rename(
+    annio = time_period,
+    pais = ref_area_label,
+    poblacion_total = obs_value
+  )
+
+# Cargamos datos de Tasa de desempleo
+datos_TD <- read_csv("/Users/yahir/Desktop/BD/WB_GS_SL_UEM_ZS.csv")
+
+# Limpiamos la base de datos
+datos_TD <- datos_TD %>%
+  clean_names() %>%
+  distinct() %>%
+  filter(time_period >= 2000) %>%
+  filter(!is.na(obs_value)) %>%   # Quita registros sin tasa de desempleo
+  filter(age_name == "15 years old and over") %>% 
+  select(
+    time_period, ref_area_id, ref_area_name,
+    sex_name, age_name, obs_value, comp_breakdown_1_name
+  ) %>%
+  rename(
+    annio = time_period,
+    pais_code = ref_area_id,
+    pais = ref_area_name,
+    sexo = sex_name,
+    tasa_desempleo = obs_value,
+    grupo_edad = age_name,
+    estimacion = comp_breakdown_1_name
+  ) %>%
+  mutate(
+    annio = as.integer(annio),
+    estimacion = str_remove(estimacion, "^Estimate:\\s*")  )
+
+
+# Cargamos datos de Fuerza laboral / participación
+
+datos_FL <- read_csv("/Users/yahir/Desktop/BD/WB_WDI_SL_TLF_CACT_NE_ZS.csv")
+
+# Limpiamos la base de datos
+datos_FL <- datos_FL %>%
+  clean_names() %>%
+  distinct() %>%
+  filter(time_period >= 2000) %>%
+  filter(!is.na(obs_value)) %>%
+  select(
+    time_period, ref_area, ref_area_label, sex_label, obs_value
+  ) %>%
+  rename(
+    annio = time_period,
+    pais_code = ref_area,
+    pais = ref_area_label,
+    sexo = sex_label,
+    tasa_participacion = obs_value
+  ) %>%
+  mutate(
+    annio = as.integer(annio) )
+
+# 3) Unión de bases
+datos_union <- datos_FL %>%
+  mutate(
+    grupo_edad = "15 years old and over",
+    estimacion = "National"
+  ) %>%
+  inner_join(
+    datos_TD,
+    by = c("annio", "pais", "sexo", "grupo_edad", "estimacion", "pais_code")
+  )
+```
+
+Con las bases ya limpias y combinadas, podemos continuar con el análisis estadístico y responder las preguntas planteadas, sin embargo es importante aclarar que en la base de participación laboral solo se cuenta con valores agregados (“Total”) y no existe desagregación por sexo; además que este indicador solo existe en versión nacional a diferencia del de tasa de desempleo que se encuentra su versión nacional y modelada (la primera se refiere a datos que provienen directamente de las oficinas nacionales de estadística y la segunda a datos estimados con modelos estadísticos) . Por esta razón, las comparaciones entre hombres y mujeres únicamente se realizan para la tasa de desempleo, mientras que el análisis conjunto entre participación laboral y desempleo se efectúa utilizando únicamente la categoría “Total” para ambos indicadores. Esto asegura que todas las comparaciones se realicen de manera consistente.
+
+
+## Análisis estadístico
+
+### Resumen general de los datos
+<br>
+
+#### BD Población total
+
+
+```{r, echo=FALSE}
+# Estructura de la base
+glimpse(poblacion_clean)
+
+# Resumen estadístico
+summary(poblacion_clean)
+
+# Número de países
+cat("Número de países:", length(unique(poblacion_clean$pais)), "\n")
+```
+
+La base de población total contiene los datos demográficos por país a partir del año 2000. Al revisar su estructura se observa que incluye la variable de año (annio), el nombre del país (pais) y la población total. Esta base abarca aproximadamente 265 países y un rango temporal de 2000 a 2024, con un total de 6,625 observaciones.
+
+
+#### BD Tasa de desempleo
+
+```{r, echo=FALSE}
+# Estructura de la base
+glimpse(datos_TD)
+
+# Resumen estadístico
+summary(datos_TD)
+
+# Número de países
+cat("Número de países:", length(unique(datos_TD$pais)), "\n")
+
+# Distribución por sexo
+cat("Distribución por sexo:\n")
+print(table(datos_TD$sexo))
+```
+
+La base de desempleo incluye información por país, año y sexo, tipo de estimación (nacional o modelada), filtrada al grupo de edad “15 years old and over” y al periodo 2000–2023. La estructura muestra valores disponibles para hombres, mujeres y total, aunque posteriormente la unión con participación laboral se realizará únicamente con la categoría “Total”. Esta base abarca 260 países con un total de 26,545 registros.
+
+#### BD Participación laboral
+
+```{r, echo=FALSE}
+# Estructura de la base
+glimpse(datos_FL)
+
+# Resumen estadístico
+summary(datos_FL)
+
+# Número de países
+cat("Número de países:", length(unique(datos_FL$pais)), "\n")
+```
+
+La base de participación laboral contiene valores agregados (“Total”) por país y del periodo 2000–2024. No cuenta con desagregación por sexo, lo cual se debe a la forma en que el Banco Mundial publica este indicador. Esta característica será importante al momento de combinar los datos con la tasa de desempleo.
+
+
+#### BD Union
+
+```{r, echo=FALSE}
+# Base unida (desempleo + participación)
+
+# Estructura de la base
+glimpse(datos_union)
+
+# Resumen estadístico
+summary(datos_union)
+
+# Número de países
+cat("Número de países (base unida):", length(unique(datos_union$pais)), "\n")
+```
+La base unida contiene las observaciones en las que desempleo y participación laboral coinciden en país, año, sexo, grupo de edad y tipo de estimación. Como era de esperarse, solo se conserva la categoría “Total” para sexo, ya que la participación laboral no presenta desagregación por género. Esta base abarca 239 países con un total de 3,137 registros y servirá para analizar la relación entre ambas variables.
+
+
+### Distribución de la tasa de desempleo
+
+La base de desempleo original incluye dos tipos de estimación: “National” y “Modeled”. Al comparar sus distribuciones para la categoría “Total” se observa que, aunque ambas siguen patrones similares, las observaciones “Modeled” pueden presentar una variabilidad distinta, ya que corresponden a estimaciones generadas mediante modelos estadísticos cuando no se cuenta con información nacional completa.
+
+<br>
+
+```{r, echo=FALSE}
+desemp_total_est <- datos_TD %>%
+  filter(sexo == "Total")
+```
+
+```{r, echo=FALSE}
+ggplot(desemp_total_est, aes(x = tasa_desempleo)) +
+  geom_histogram(bins = 30, color = "white") +
+  facet_wrap(~ estimacion, scales = "free_y") +
+  labs(
+    title = "Distribución de la tasa de desempleo por tipo de estimación (Total)",
+    x = "Tasa de desempleo (%)",
+    y = "Frecuencia"
+  )
+```
+
+Dado que la participación laboral utilizada en este proyecto solo está disponible como estimación nacional, el análisis principal se realiza con la estimación “National” de desempleo.
+
+La distribución de la tasa de desempleo muestra valores que, en su mayoría, se concentran en rangos bajos y moderados, aunque existen países y años con tasas considerablemente elevadas. El histograma revela una distribución asimétrica hacia la derecha, lo que indica que la mayoría de los países presentan niveles de desempleo relativamente bajos, mientras que un número menor alcanza tasas altas.
+
+El boxplot permite identificar valores atípicos, correspondientes a periodos o países con episodios económicos críticos, donde el desempleo se incrementa de forma notable. Los estadísticos descriptivos confirman esta tendencia, mostrando que la mitad de las observaciones tiene desempleo menor a 6.64%.
+
+<br>
+
+```{r, echo=FALSE}
+# Subconjunto: desempleo, estimación nacional, total por sexo
+desemp_nat_total <- datos_TD %>%
+  filter(
+    estimacion == "National",
+    sexo == "Total"
+  )
+```
+
+```{r, echo=FALSE}
+# Histograma
+ggplot(desemp_nat_total, aes(x = tasa_desempleo)) +
+  geom_histogram(bins = 30, fill = "#2C3E50", color = "white") +
+  labs(
+    title = "Distribución de la tasa de desempleo (estimación nacional, total)",
+    x = "Tasa de desempleo (%)",
+    y = "Frecuencia"
+  )
+
+# Boxplot
+ggplot(desemp_nat_total, aes(y = tasa_desempleo)) +
+  geom_boxplot(fill = "#2980B9") +
+  labs(
+    title = "Boxplot de la tasa de desempleo (estimación nacional, total)",
+    y = "Tasa de desempleo (%)"
+  )
+```
+<br>
+
+Estadísticos descriptivos
+
+```{r, echo=FALSE}
+summary(desemp_nat_total$tasa_desempleo)
+```
+
+Percentiles adicionales
+
+```{r, echo=FALSE}
+quantile(
+  desemp_nat_total$tasa_desempleo,
+  probs = c(0.01, 0.05, 0.5, 0.95, 0.99),
+  na.rm = TRUE
+)
+```
+
+
+### Países con mayor y menor desempleo
+
+Para identificar los países con las tasas más altas y más bajas de desempleo se calculó el promedio del indicador entre 2000 y 2023 utilizando únicamente la estimación “National” y la categoría “Total” en la variable sexo.
+
+Los países con mayor promedio de desempleo fueron Kosovo, North Macedonia, Eswatini, Djibouti y Lesotho, todos con valores superiores al 25–30%. Estas cifras reflejan que en estos países el mercado laboral ha sido inestable y ha presentado dificultades a lo largo del tiempo. Kosovo se posiciona como el país con el desempleo más elevado en el periodo.
+
+Por el contrario, los países con menor desempleo promedio fueron Qatar, Myanmar, Thailand, Chad y Cambodia, con tasas inferiores al 1.3%.
+
+Analizando las regiones donde se encuentran estos países, podemos observar que aquellos con mayor desempleo se ubican principalmente en África, mientras que los que registran las tasas más bajas se localizan, en su mayoría, en Asia.
+
+<br>
+
+```{r, echo=FALSE}
+# Promedio de desempleo por país
+prom_desempleo_pais <- desemp_nat_total %>%
+  group_by(pais) %>%
+  summarise(promedio_desempleo = mean(tasa_desempleo, na.rm = TRUE)) %>%
+  arrange(desc(promedio_desempleo))
+```
+
+
+```{r, echo=FALSE}
+# Filtrar para obtener el top 5 de países con mayor y menor promedio en su tasa de desempleo
+top10_alto <- prom_desempleo_pais %>%
+  slice_max(order_by = promedio_desempleo, n = 5)
+
+top10_bajo <- prom_desempleo_pais %>%
+  slice_min(order_by = promedio_desempleo, n = 5)
+```
+
+```{r, echo=FALSE}
+# Grafico Top 5 bajo
+ggplot(top10_alto, aes(x = reorder(pais, promedio_desempleo), 
+                       y = promedio_desempleo)) +
+  geom_col(fill = "#2E8B57") +
+  coord_flip() +
+  labs(
+    title = "Top 5 paises con mayor promedio de desempleo (2000–2023)",
+    x = "Pais",
+    y = "Tasa de desempleo promedio (%)"
+  )
+
+# Grafico Top 5 bajo
+ggplot(top10_bajo, aes(x = reorder(pais, -promedio_desempleo), 
+                       y = promedio_desempleo)) +
+  geom_col(fill = "#B22222") +
+  coord_flip() +
+  labs(
+    title = "Top 5 paises con menor promedio de desempleo (2000–2023)",
+    x = "Pais",
+    y = "Tasa de desempleo promedio (%)"
+  )
+```
+
+### Evolucion de la participacion laboral en el tiempo
+
+La evolución global de la participación laboral entre 2000 y 2023 muestra una trayectoria relativamente estable, con variaciones leves a lo largo del periodo. En los primeros años se observa una ligera disminución, seguida de fluctuaciones entre 2010 y 2017, donde la participación alcanza algunos de los valores más altos registrados. Posteriormente, alrededor de 2020, hay una caída que coincide con el impacto de la pandemia por COVID-19. En los años más recientes, la participación laboral muestra cierta recuperación, aunque sin regresar de forma consistente a los niveles máximos observados previamente.
+
+<br>
+
+```{r, echo=FALSE}
+# Promedio de la tasa de participación laboral considerando todos los países disponibles
+participacion_anual <- datos_union %>%
+  group_by(annio) %>%
+  summarise(prom_tasa_part = mean(tasa_participacion, na.rm = TRUE))
+```
+
+```{r, echo=FALSE}
+# Grafica de línea
+ggplot(participacion_anual, aes(x = annio, y = prom_tasa_part)) +
+  geom_line(color = "#2C3E50", linewidth = 1) +
+  geom_point(color = "#2C3E50") +
+  labs(
+    title = "Evolución global de la participación laboral (2000–2023)",
+    x = "Año",
+    y = "Tasa de participación laboral (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "black") 
+  )
+```
+
+### Brechas por sexo en la tasa de desempleo
+
+La tasa de desempleo presenta diferencias claras entre hombres y mujeres. Al promediar los valores entre 2000 y 2023 utilizando la estimación “National” para el grupo de edad de 15 años o más, se observa que el desempleo femenino (≈ 9.5%) es superior al desempleo masculino (≈ 7.5%). Esto indica que las mujeres enfrentan mayores barreras para acceder al empleo o para reintegrarse al mercado laboral.
+
+La serie temporal confirma esta tendencia: aunque ambos sexos muestran fluctuaciones similares en ciertos periodos la brecha entre mujeres y hombres se mantiene a lo largo del tiempo, con el desempleo femenino estando por encima de manera constante.
+
+<br>
+
+```{r, echo=FALSE}
+# Subconjunto para comparar hombres vs mujeres
+desemp_sexo <- datos_TD %>%
+  filter(
+    estimacion == "National",
+    grupo_edad == "15 years old and over",
+    sexo %in% c("Female", "Male")
+  )
+```
+
+```{r, echo=FALSE}
+# Promedio de desempleo por sexo
+resumen_sexo <- desemp_sexo %>%
+  group_by(sexo) %>%
+  summarise(promedio = mean(tasa_desempleo, na.rm = TRUE))
+
+# Grafica de barras
+ggplot(resumen_sexo, aes(x = sexo, y = promedio, fill = sexo)) +
+  geom_col(width = 0.6) +
+  scale_fill_manual(values = c("Female" = "#D81B60", "Male" = "#1E88E5")) +
+  labs(
+    title = "Comparación del promedio de desempleo por sexo (2000–2023)",
+    x = "Sexo",
+    y = "Tasa de desempleo promedio (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+```
+
+```{r, echo=FALSE, message=FALSE}
+# Serie temporal comparativa
+desemp_sexo_anual <- desemp_sexo %>%
+  group_by(annio, sexo) %>%
+  summarise(prom_anual = mean(tasa_desempleo, na.rm = TRUE))
+
+ggplot(desemp_sexo_anual, aes(x = annio, y = prom_anual, color = sexo)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  scale_color_manual(values = c("Female" = "#D81B60", "Male" = "#1E88E5")) +
+  labs(
+    title = "Evolución del desempleo por sexo (2000–2023)",
+    x = "Año",
+    y = "Tasa de desempleo promedio (%)",
+    color = "Sexo"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
+### Relación entre la participación laboral y la tasa de desempleo
+
+Al analizar la relación entre la tasa de participación laboral y la tasa de desempleo, se obtiene una correlación de –0.46, lo que indica una relación moderada negativa entre ambas variables. Esto significa que, en general, a medida que la participación laboral aumenta, la tasa de desempleo tiende a disminuir.
+
+En el gráfico de dispersión se observa una tendencia descendente. Aunque, los puntos están bastante dispersos, lo que muestra que no todos los países siguen exactamente este patrón. En algunos casos la relación puede ser diferente.
+
+En resumen, existe una relación negativa entre ambas variables, pero no es tan fuerte como para decir que una determina directamente a la otra.
+
+<br>
+
+```{r, echo=FALSE}
+# Calculo de la correlacion entre desempleo y participacion laboral
+correlacion <- cor(
+  datos_union$tasa_desempleo,
+  datos_union$tasa_participacion,
+  use = "complete.obs"
+)
+
+cat("Correlacion: ", correlacion)
+```
+
+```{r, echo=FALSE, message=FALSE}
+# Grafico de dispersion entre tasa de desemplo y tasa de participacion
+ggplot(datos_union, aes(x = tasa_participacion, y = tasa_desempleo)) +
+  geom_point(alpha = 0.4, color = "#2C3E50") +
+  geom_smooth(method = "lm", color = "red", linewidth = 1.2) +
+  labs(
+    title = "Relación entre participación laboral y desempleo",
+    x = "Tasa de participación laboral (%)",
+    y = "Tasa de desempleo (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
+### Modelo de regresion lineal
+
+Se ajustó un modelo de regresión lineal para evaluar la relación entre la tasa de participación laboral y la tasa de desempleo. El modelo obtenido fue:
+
+- tasa_desempleo = 25.03 − 0.279 × tasa_participacion
+
+Los resultados muestran que el coeficiente de la participación laboral (–0.279; p < 0.001) es negativo y estadísticamente significativo. Esto significa que, en promedio, cuando la participación laboral aumenta en 1 punto porcentual, la tasa de desempleo disminuye alrededor de 0.28 puntos porcentuales. Además, el valor de R² fue 0.207, lo que indica que la participación laboral explica aproximadamente el 20.7% de la variación en la tasa de desempleo.
+
+En resumen, el modelo confirma una relación negativa entre participación laboral y desempleo: a mayor participación laboral, menor desempleo. Sin embargo, esta relación por sí sola no es suficiente para explicar completamente el comportamiento del desempleo a nivel global.
+
+
+```{r, echo=FALSE}
+# Modelo de regresion
+modelo_desemp <- lm(tasa_desempleo ~ tasa_participacion, data = datos_union)
+
+summary(modelo_desemp)
+```
+
+
+### Conclusiones
+
+El análisis realizado muestra varias características importantes del mercado laboral mundial entre 2000 y 2023:
+
+-Desigualdades marcadas entre paises: Al comparar los promedios de desempleo, se identificó que los países con tasas más altas se concentran principalmente en África, mientras que los países con menor desempleo se ubican en Asia y en algunos casos del Medio Oriente. Esto refleja que el comportamiento del mercado laboral varía según la región.
+
+- Participación laboral estable, pero afectada por eventos globales: A nivel general, la participación laboral mostró un comportamiento relativamente estable a lo largo del tiempo, con caídas visibles en periodos de crisis como 2008 y 2020.
+
+- Brechas por sexo en el desempleo: El desempleo femenino fue consistentemente mayor que el masculino durante todo el periodo analizado, lo que indica que las mujeres enfrentan mayores dificultades para acceder o mantenerse en el mercado laboral cuyas causas podrían ser prácticas de discriminación, mayor carga de tareas domésticas, menores oportunidades laborales, entre otras.
+
+- Relación negativa entre participación laboral y desempleo: Se identificó una correlación moderada y negativa (≈ –0.46), lo que significa que, en general, los países con mayor participación laboral tienden a tener menores tasas de desempleo. Sin embargo, esta relación no es perfecta.
+
+- El modelo de regresión confirma la tendencia, pero no explica todo: El modelo lineal mostró que, en promedio, un aumento en la participación laboral se asocia con una disminución en la tasa de desempleo. Aun así, el R² obtenido indica que la participación laboral explica alrededor del 20% de la variación del desempleo, por lo que hay muchos otros factores que influyen en este indicador y que no están contenidos en este modelo.
+
+En conjunto, los resultados muestran que el mercado laboral es un fenomeno amplio y con muchos factores en juego. Está marcado por diferencias entre regiones, por brechas entre hombres y mujeres y por cambios económicos que afectan a todos los países. Aunque sí existe una relación entre la participación laboral y el desempleo, esta relación por sí sola no alcanza para explicar por completo cómo se comporta el desempleo a nivel mundial.
+
+
+
+
