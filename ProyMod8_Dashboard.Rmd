@@ -26,9 +26,12 @@ library(shiny)
 library(plotly)
 library(DT)
 library(leaflet)
-library(rnaturalearth)
+#library(rnaturalearth)
 library(sf)
 library(scales) 
+library(rsconnect)
+
+options(sf_use_s2 = FALSE)
 
 # Cargamos datos de la Población Total 
 poblacion_raw <- read_csv("WB_WDI_SP_POP_TOTL.csv")
@@ -107,7 +110,8 @@ datos_union <- datos_FL %>%
 #Se realizó la limpieza de datos estandarizando nombres de variables, se aliminaron registros duplicados, exclusión de observaciones con valores faltantes en variables clave y se homologaron categorías para permitir la integración de bases de datos. Para despoués poder unir las bases mediante datos en comun como país, año, sexo y grupo de edad.
 
 # shapefile mundial
-world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+world <- readRDS("world.rds")
+
 
 ```
 
